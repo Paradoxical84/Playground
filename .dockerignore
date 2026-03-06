@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+.git
+.github
+.venv
+venv
+*.md
+k8s/
+runbooks/
+scripts/
+.gitignore
+.dockerignore
+kind-config.yaml
+model/train_model.py
