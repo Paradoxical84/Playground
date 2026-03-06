@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lab-api
+  namespace: ai-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lab-api
+  template:
+    metadata:
+      labels:
+        app: lab-api
+    spec:
+      containers:
+        - name: lab-api
+          image: cloud-ai-lab:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MODEL_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: lab-api-config
+                  key: MODEL_DIR
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: lab-api-config
+                  key: LOG_LEVEL
+            - name: STARTUP_DELAY_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: lab-api-config
+                  key: STARTUP_DELAY_SECONDS
+            - name: MEMORY_HOG_MIB
+              valueFrom:
+                configMapKeyRef:
+                  name: lab-api-config
+                  key: MEMORY_HOG_MIB
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi

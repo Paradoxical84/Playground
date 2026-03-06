@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lab-api-config
+  namespace: ai-lab
+data:
+  MODEL_DIR: /app/models/demo-model
+  LOG_LEVEL: INFO
+  STARTUP_DELAY_SECONDS: "0"
+  MEMORY_HOG_MIB: "0"
