@@ -20,7 +20,8 @@ to a local Kubernetes cluster via **kind**.
 │   ├── failures/             # Failure-injection manifests
 │   ├── deployment-slow-start.yaml  # Probe-failure overlay (STARTUP_DELAY_SEC=45)
 │   ├── deployment-oom.yaml         # OOMKilled overlay (128 Mi limit)
-│   └── deployment-bad-config.yaml  # Wrong MODEL_DIR overlay
+│   ├── deployment-bad-config.yaml  # Wrong MODEL_DIR overlay
+│   └── debug-pod.yaml              # netshoot pod for DNS debugging
 ├── runbooks/                 # Troubleshooting runbooks
 ├── scripts/                  # Helper scripts (build, deploy, test)
 ├── Dockerfile
@@ -469,6 +470,120 @@ kubectl exec -n ai-lab deploy/ai-lab-bad-config -- \
 
 ```bash
 kubectl delete -f k8s/deployment-bad-config.yaml
+```
+
+---
+
+## DNS / Service Discovery Checks
+
+This section uses `k8s/debug-pod.yaml` — a lightweight pod running
+[nicolaka/netshoot](https://github.com/nicolaka/netshoot) with `curl`,
+`dig`, `nslookup`, `wget`, `ping`, `ip`, and `tcpdump` pre-installed.
+Use it to verify cluster DNS and end-to-end connectivity to the `ai-lab`
+Service.
+
+Full runbook: [`runbooks/dns_service_discovery.md`](runbooks/dns_service_discovery.md)
+
+### Prerequisites
+
+The base deployment and Service must be running:
+
+```bash
+kubectl apply -f k8s/base/namespace.yaml
+kubectl apply -f k8s/base/deployment.yaml
+kubectl apply -f k8s/base/service.yaml
+kubectl rollout status deployment/ai-lab -n ai-lab --timeout=120s
+```
+
+### Launch the debug pod
+
+```bash
+kubectl apply -f k8s/debug-pod.yaml
+kubectl wait --for=condition=Ready pod/debug-pod -n ai-lab --timeout=30s
+```
+
+### Shell into the debug pod
+
+```bash
+kubectl exec -it -n ai-lab debug-pod -- sh
+```
+
+### DNS resolution
+
+Inside the debug pod:
+
+```bash
+# nslookup — basic name resolution
+nslookup ai-lab.ai-lab.svc.cluster.local
+
+# dig — detailed query with status code and answer section
+dig ai-lab.ai-lab.svc.cluster.local
+
+# Verify cluster DNS itself is working (Kubernetes API service)
+nslookup kubernetes.default.svc.cluster.local
+```
+
+Expected `nslookup` output:
+
+```
+Server:    10.96.0.10
+Address:   10.96.0.10#53
+
+Name:   ai-lab.ai-lab.svc.cluster.local
+Address: 10.96.XXX.XXX
+```
+
+If you get `NXDOMAIN`, the service name or namespace is wrong.  If the
+query times out, CoreDNS may be down or a NetworkPolicy is blocking
+port 53.
+
+### HTTP connectivity
+
+Inside the debug pod:
+
+```bash
+# Full FQDN (works from any namespace)
+curl -sf http://ai-lab.ai-lab.svc.cluster.local/healthz
+# → {"status":"alive"}
+
+# Short name (works from the same namespace)
+curl -sf http://ai-lab/readyz
+# → {"status":"ready"}
+
+# Prediction via the Service
+curl -sf -X POST http://ai-lab/predict \
+  -H "Content-Type: application/json" -d '{"x": 5}'
+# → {"x":5.0,"y":10.95}
+```
+
+### Inspect endpoints and selectors
+
+From your local terminal (not inside the debug pod):
+
+```bash
+# Endpoints — should list pod IPs
+kubectl get endpoints ai-lab -n ai-lab
+
+# Service selector
+kubectl get svc ai-lab -n ai-lab -o jsonpath='{.spec.selector}'
+# → {"app":"ai-lab"}
+
+# Pod labels (must match the selector)
+kubectl get pods -n ai-lab --show-labels
+
+# CoreDNS health
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+```
+
+If `endpoints` shows `<none>`, either no pods match the Service selector
+or all matching pods are not Ready.  See
+[`runbooks/dns_service_discovery.md`](runbooks/dns_service_discovery.md)
+for the full root-cause matrix.
+
+### Clean up
+
+```bash
+kubectl delete -f k8s/debug-pod.yaml
 ```
 
 ---

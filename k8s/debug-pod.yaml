@@ -1,0 +1,28 @@
+# Debug pod for DNS and service-discovery troubleshooting.
+#
+# nicolaka/netshoot includes curl, dig, nslookup, wget, ping, ip,
+# tcpdump, netstat, and other network diagnostic tools.
+#
+# Apply:  kubectl apply -f k8s/debug-pod.yaml
+# Shell:  kubectl exec -it -n ai-lab debug-pod -- sh
+# Clean:  kubectl delete -f k8s/debug-pod.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-pod
+  namespace: ai-lab
+  labels:
+    app: debug-pod
+spec:
+  containers:
+    - name: netshoot
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
