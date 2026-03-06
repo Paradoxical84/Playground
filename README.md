@@ -18,7 +18,8 @@ to a local Kubernetes cluster via **kind**.
 ├── k8s/
 │   ├── base/                 # Namespace, Deployment, Services
 │   ├── failures/             # Failure-injection manifests
-│   └── deployment-slow-start.yaml  # Probe-failure overlay (STARTUP_DELAY_SEC=45)
+│   ├── deployment-slow-start.yaml  # Probe-failure overlay (STARTUP_DELAY_SEC=45)
+│   └── deployment-oom.yaml         # OOMKilled overlay (128 Mi limit)
 ├── runbooks/                 # Troubleshooting runbooks
 ├── scripts/                  # Helper scripts (build, deploy, test)
 ├── Dockerfile
@@ -245,6 +246,99 @@ kubectl describe pod -n ai-lab -l scenario=slow-start | grep -i unhealthy
 
 ```bash
 kubectl delete -f k8s/deployment-slow-start.yaml
+```
+
+---
+
+## Failure Injection: OOMKilled
+
+This scenario uses `k8s/deployment-oom.yaml` to demonstrate what happens
+when a container's memory limit is lower than the runtime actually needs.
+The limit is set to **128 Mi** — but TensorFlow CPU requires ≈ 300–500 Mi
+just for `import tensorflow`.  The kernel OOM killer sends SIGKILL
+(exit code 137) before the process finishes starting.
+
+Full runbook: [`runbooks/oom_killed.md`](runbooks/oom_killed.md)
+
+### Deploy the broken deployment
+
+```bash
+# Make sure the namespace exists
+kubectl apply -f k8s/base/namespace.yaml
+
+# Apply the OOM overlay
+kubectl apply -f k8s/deployment-oom.yaml
+```
+
+### Observe the failure
+
+```bash
+# Watch the pod cycle through OOMKilled → CrashLoopBackOff
+kubectl get pods -n ai-lab -l scenario=oom -w
+```
+
+Expected output:
+
+```
+NAME                            READY   STATUS      RESTARTS      AGE
+ai-lab-oom-7b4d9f6c88-tn4w2    0/1     OOMKilled   0             5s
+ai-lab-oom-7b4d9f6c88-tn4w2    0/1     CrashLoopBackOff   1 (2s ago)   12s
+ai-lab-oom-7b4d9f6c88-tn4w2    0/1     OOMKilled   2 (1s ago)    25s
+```
+
+### Inspect events and logs
+
+```bash
+# Describe the pod — look for "Reason: OOMKilled" and "Exit Code: 137"
+kubectl describe pod -n ai-lab -l scenario=oom
+
+# Namespace events sorted by time — look for the OOMKilling / BackOff cycle
+kubectl get events -n ai-lab --sort-by=.metadata.creationTimestamp
+
+# Previous container logs — usually empty because the process was killed
+# before writing any output
+kubectl logs -n ai-lab -l scenario=oom --previous --tail=50
+```
+
+An empty `--previous` log combined with exit code 137 is the hallmark of
+an early-startup OOM — the process never got far enough to emit a log line.
+
+### Fix it
+
+Raise the memory limit to match real usage:
+
+```bash
+kubectl set resources deployment/ai-lab-oom -n ai-lab \
+  --limits=memory=1Gi --requests=memory=512Mi
+```
+
+Or delete the broken overlay and rely on the base deployment:
+
+```bash
+kubectl delete -f k8s/deployment-oom.yaml
+```
+
+### Verify the fix
+
+```bash
+# Pod should reach 1/1 Ready with 0 restarts
+kubectl get pods -n ai-lab -l app=ai-lab-oom
+
+# No OOMKilled in recent events
+kubectl get events -n ai-lab --sort-by=.metadata.creationTimestamp | grep -i oom
+
+# Readiness returns 200
+kubectl exec -n ai-lab deploy/ai-lab-oom -- \
+  curl -sf http://localhost:8080/readyz
+
+# Memory usage is within the new limit
+kubectl top pod -n ai-lab -l app=ai-lab-oom
+```
+
+### Clean up
+
+```bash
+kubectl delete -f k8s/deployment-oom.yaml
 ```
 
 ---
