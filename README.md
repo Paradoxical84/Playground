@@ -22,7 +22,13 @@ to a local Kubernetes cluster via **kind**.
 │   ├── deployment-oom.yaml         # OOMKilled overlay (128 Mi limit)
 │   ├── deployment-bad-config.yaml  # Wrong MODEL_DIR overlay
 │   └── debug-pod.yaml              # netshoot pod for DNS debugging
-├── runbooks/                 # Troubleshooting runbooks
+├── runbooks/
+│   ├── TEMPLATE.md           # Runbook authoring template
+│   ├── TRIAGE_CHEATSHEET.md  # Symptom → commands → root cause lookup
+│   ├── probe_failure.md      # CrashLoopBackOff (slow startup)
+│   ├── oom_killed.md         # OOMKilled (memory limit)
+│   ├── bad_config.md         # Wrong MODEL_DIR
+│   └── dns_service_discovery.md  # DNS / service discovery
 ├── scripts/                  # Helper scripts (build, deploy, test)
 ├── Dockerfile
 ├── kind-config.yaml
@@ -44,6 +50,77 @@ to a local Kubernetes cluster via **kind**.
 | `MODEL_DIR` | `/model` | Path to the TF SavedModel directory |
 | `STARTUP_DELAY_SEC` | `0` | Seconds to sleep before loading the model (fault injection) |
 | `PORT` | `8080` | HTTP listen port |
+
+## Triage flow
+
+When something breaks, work through these five steps in order.  Each
+step either identifies the problem or tells you where to look next.
+
+**Step 1 — Get the big picture:**
+
+```bash
+kubectl get pods -n ai-lab -o wide
+kubectl get events -n ai-lab --sort-by=.metadata.creationTimestamp
+```
+
+Read STATUS, READY, and RESTARTS.  Skim the events for `Unhealthy`,
+`OOMKilling`, `BackOff`, or `FailedScheduling`.
+
+**Step 2 — Zoom into the broken pod:**
+
+```bash
+kubectl describe pod -n ai-lab <pod>
+```
+
+Check the Events section (probe failures, image pulls, OOM kills), the
+container State/Last State (exit code, reason), and the Environment
+block (wrong env vars are visible here).
+
+**Step 3 — Read the logs:**
+
+```bash
+kubectl logs -n ai-lab <pod> --tail=50
+kubectl logs -n ai-lab <pod> --previous --tail=50
+```
+
+`--previous` shows the log from the last container that was killed —
+critical for CrashLoopBackOff and OOMKilled pods where the current
+container may not have written anything yet.
+
+**Step 4 — Exec in for live debugging:**
+
+```bash
+kubectl exec -it -n ai-lab <pod> -- sh
+
+# Inside the pod:
+curl -sf http://localhost:8080/readyz        # readiness + error reason
+env | grep MODEL_DIR                         # check config
+ls /model                                    # verify filesystem
+nslookup ai-lab.ai-lab.svc.cluster.local     # DNS resolution
+curl -sf http://ai-lab/healthz               # service discovery
+```
+
+If the target pod is crashing, use the debug pod instead:
+
+```bash
+kubectl exec -it -n ai-lab debug-pod -- sh
+```
+
+**Step 5 — Check resource limits:**
+
+```bash
+kubectl top pods -n ai-lab
+kubectl get pod <pod> -n ai-lab \
+  -o jsonpath='{.spec.containers[0].resources}'
+```
+
+Compare actual usage (`top`) against the configured limits.  If usage is
+near the limit, an OOM kill is imminent.
+
+**Quick-reference:** see
+[`runbooks/TRIAGE_CHEATSHEET.md`](runbooks/TRIAGE_CHEATSHEET.md) for a
+symptom-to-root-cause lookup table, and
+[`runbooks/TEMPLATE.md`](runbooks/TEMPLATE.md) for the runbook format.
 
 ---
 
