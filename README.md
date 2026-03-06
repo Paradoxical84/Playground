@@ -17,7 +17,8 @@ to a local Kubernetes cluster via **kind**.
 │   └── saved_model/          # (generated) TF SavedModel artefact
 ├── k8s/
 │   ├── base/                 # Namespace, Deployment, Services
-│   └── failures/             # Failure-injection manifests
+│   ├── failures/             # Failure-injection manifests
+│   └── deployment-slow-start.yaml  # Probe-failure overlay (STARTUP_DELAY_SEC=45)
 ├── runbooks/                 # Troubleshooting runbooks
 ├── scripts/                  # Helper scripts (build, deploy, test)
 ├── Dockerfile
@@ -154,6 +155,99 @@ curl -X POST http://localhost:8080/predict \
 | 4 | DNS / service-discovery debug | `kubectl apply -f k8s/failures/dns-debug.yaml` |
 
 Each scenario has a matching runbook in `runbooks/`.
+
+---
+
+## Failure Injection: Probe Failure (Slow Startup)
+
+This scenario uses `k8s/deployment-slow-start.yaml` to demonstrate what
+happens when a container takes longer to start than its probes allow.
+`STARTUP_DELAY_SEC=45` makes the app sleep for 45 seconds before the Flask
+server starts listening — but the liveness probe kills the container after
+only ≈ 20 seconds, triggering a CrashLoopBackOff.
+
+Full runbook: [`runbooks/probe_failure.md`](runbooks/probe_failure.md)
+
+### Deploy the broken deployment
+
+```bash
+# Make sure the namespace exists (idempotent)
+kubectl apply -f k8s/base/namespace.yaml
+
+# Apply the slow-start overlay
+kubectl apply -f k8s/deployment-slow-start.yaml
+```
+
+### Observe the failure
+
+```bash
+# Watch the pod cycle through Running → CrashLoopBackOff
+kubectl get pods -n ai-lab -l scenario=slow-start -w
+```
+
+Expected output (RESTARTS keeps climbing):
+
+```
+NAME                                  READY   STATUS    RESTARTS   AGE
+ai-lab-slow-start-6d8f9b7c45-x2k7p   0/1     Running   0          3s
+ai-lab-slow-start-6d8f9b7c45-x2k7p   0/1     Running   1 (1s ago) 18s
+ai-lab-slow-start-6d8f9b7c45-x2k7p   0/1     CrashLoopBackOff   1 (1s ago) 18s
+```
+
+### Inspect events and logs
+
+```bash
+# Events — look for "Liveness probe failed" and "connection refused"
+kubectl describe pod -n ai-lab -l scenario=slow-start
+
+# Current container logs (may be short)
+kubectl logs -n ai-lab -l scenario=slow-start --tail=30
+
+# Previous container's logs (the one that was killed)
+kubectl logs -n ai-lab -l scenario=slow-start --previous --tail=30
+```
+
+### Fix it
+
+Add a `startupProbe` that gives the container enough time to finish
+its 45-second initialisation:
+
+```bash
+kubectl patch deployment ai-lab-slow-start -n ai-lab --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/containers/0/startupProbe","value":{
+    "httpGet":{"path":"/healthz","port":"http"},
+    "initialDelaySeconds":0,"periodSeconds":5,"failureThreshold":12
+  }}
+]'
+```
+
+Or remove the delay entirely to reset:
+
+```bash
+kubectl set env deployment/ai-lab-slow-start -n ai-lab STARTUP_DELAY_SEC=0
+```
+
+### Verify the fix
+
+```bash
+# Pod should reach 1/1 Ready with 0 restarts
+kubectl get pods -n ai-lab -l scenario=slow-start
+
+# Readiness returns 200
+kubectl exec -n ai-lab deploy/ai-lab-slow-start -- \
+  curl -sf http://localhost:8080/readyz
+
+# No more probe failures in events
+kubectl describe pod -n ai-lab -l scenario=slow-start | grep -i unhealthy
+```
+
+### Clean up
+
+```bash
+kubectl delete -f k8s/deployment-slow-start.yaml
+```
+
+---
 
 ## Tear-down
 

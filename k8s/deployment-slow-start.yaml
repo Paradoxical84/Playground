@@ -1,0 +1,75 @@
+# Failure-injection overlay: Probe Failure (Slow Startup)
+#
+# STARTUP_DELAY_SEC=45 makes _load_model() sleep for 45 s *before*
+# app.run() is called.  While sleeping the Flask server is not listening,
+# so every probe gets a connection-refused error.
+#
+# The liveness probe fires at t=5 s (initialDelaySeconds) and allows
+# 3 consecutive failures (failureThreshold) at 5 s intervals, so kubelet
+# kills the container at ≈ t=20 s — 25 s before the sleep would finish.
+# Kubernetes restarts the container, the same thing happens, and the pod
+# enters CrashLoopBackOff.
+#
+# The readiness probe starts at t=0 with a 2 s period, so the pod is
+# marked NotReady almost instantly and never receives traffic.
+#
+# Apply:  kubectl apply -f k8s/deployment-slow-start.yaml
+# Watch:  kubectl get pods -n ai-lab -l scenario=slow-start -w
+# Clean:  kubectl delete -f k8s/deployment-slow-start.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-lab-slow-start
+  namespace: ai-lab
+  labels:
+    app: ai-lab-slow-start
+    scenario: slow-start
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-lab-slow-start
+  template:
+    metadata:
+      labels:
+        app: ai-lab-slow-start
+        scenario: slow-start
+    spec:
+      containers:
+        - name: ai-lab
+          image: ai-lab:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: MODEL_DIR
+              value: /model
+            - name: PORT
+              value: "8080"
+            - name: STARTUP_DELAY_SEC
+              value: "45"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 1
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
