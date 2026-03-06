@@ -36,6 +36,7 @@ log = logging.getLogger("ai-lab")
 app = Flask(__name__)
 _model = None
 _ready = False
+_load_error = None
 
 # ---------------------------------------------------------------------------
 # Request logging (method, path, status, latency_ms)
@@ -63,7 +64,7 @@ def _log_request(response):
 # ---------------------------------------------------------------------------
 
 def _load_model():
-    global _model, _ready
+    global _model, _ready, _load_error
 
     if STARTUP_DELAY_SEC > 0:
         log.warning("Simulating slow startup: sleeping %d s …", STARTUP_DELAY_SEC)
@@ -71,10 +72,18 @@ def _load_model():
 
     model_path = Path(MODEL_DIR)
     if not model_path.exists():
-        raise FileNotFoundError(f"MODEL_DIR not found: {MODEL_DIR}")
+        _load_error = f"MODEL_DIR path does not exist: {MODEL_DIR}"
+        log.error(_load_error)
+        raise FileNotFoundError(_load_error)
 
     log.info("Loading SavedModel from %s …", MODEL_DIR)
-    _model = tf.keras.models.load_model(MODEL_DIR)
+    try:
+        _model = tf.keras.models.load_model(MODEL_DIR)
+    except Exception as exc:
+        _load_error = f"Failed to load model from {MODEL_DIR}: {exc}"
+        log.error(_load_error)
+        raise
+
     _ready = True
     log.info("Model loaded – server is ready")
 
@@ -93,7 +102,10 @@ def readyz():
     """Readiness — 200 only after the model is loaded."""
     if _ready:
         return jsonify({"status": "ready"}), 200
-    return jsonify({"status": "not_ready"}), 503
+    body = {"status": "not_ready"}
+    if _load_error:
+        body["error"] = _load_error
+    return jsonify(body), 503
 
 
 @app.route("/predict", methods=["POST"])

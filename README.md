@@ -19,7 +19,8 @@ to a local Kubernetes cluster via **kind**.
 │   ├── base/                 # Namespace, Deployment, Services
 │   ├── failures/             # Failure-injection manifests
 │   ├── deployment-slow-start.yaml  # Probe-failure overlay (STARTUP_DELAY_SEC=45)
-│   └── deployment-oom.yaml         # OOMKilled overlay (128 Mi limit)
+│   ├── deployment-oom.yaml         # OOMKilled overlay (128 Mi limit)
+│   └── deployment-bad-config.yaml  # Wrong MODEL_DIR overlay
 ├── runbooks/                 # Troubleshooting runbooks
 ├── scripts/                  # Helper scripts (build, deploy, test)
 ├── Dockerfile
@@ -339,6 +340,135 @@ kubectl top pod -n ai-lab -l app=ai-lab-oom
 
 ```bash
 kubectl delete -f k8s/deployment-oom.yaml
+```
+
+---
+
+## Failure Injection: Bad Configuration (Wrong MODEL_DIR)
+
+This scenario uses `k8s/deployment-bad-config.yaml` to demonstrate a
+misconfigured environment variable.  `MODEL_DIR` is set to
+`/wrong_model_path`, which does not exist in the container.  The app logs
+an explicit error with the exception text, Flask starts normally
+(`/healthz` → 200), but `/readyz` returns 503 forever because the model
+never loads.
+
+The pod shows **Running 0/1 Ready** with **zero restarts** — the subtlest
+failure mode.  No traffic is routed to it.
+
+Full runbook: [`runbooks/bad_config.md`](runbooks/bad_config.md)
+
+### Deploy the broken deployment
+
+```bash
+# Make sure the namespace exists
+kubectl apply -f k8s/base/namespace.yaml
+
+# Apply the bad-config overlay
+kubectl apply -f k8s/deployment-bad-config.yaml
+```
+
+### Observe the failure
+
+```bash
+# Watch — the pod will be Running but 0/1 Ready, with 0 restarts
+kubectl get pods -n ai-lab -l scenario=bad-config -w
+```
+
+Expected output:
+
+```
+NAME                                  READY   STATUS    RESTARTS   AGE
+ai-lab-bad-config-5f7d8c9b64-k9m3r   0/1     Running   0          10s
+```
+
+### Troubleshoot
+
+**Check the logs — look for the explicit error message and traceback:**
+
+```bash
+kubectl logs -n ai-lab -l scenario=bad-config --tail=50
+```
+
+Expected:
+
+```
+PORT=8080  MODEL_DIR=/wrong_model_path  STARTUP_DELAY_SEC=0
+MODEL_DIR path does not exist: /wrong_model_path
+Model load failed at startup — readyz will return 503
+Traceback (most recent call last):
+  ...
+FileNotFoundError: MODEL_DIR path does not exist: /wrong_model_path
+```
+
+**Describe the pod — look for readiness probe 503s and the env vars:**
+
+```bash
+kubectl describe pod -n ai-lab -l scenario=bad-config
+```
+
+Look for `Readiness probe failed: HTTP probe failed with statuscode: 503`
+in Events, and `MODEL_DIR: /wrong_model_path` in the Environment section.
+
+**Check env vars in the running pod:**
+
+```bash
+kubectl exec -n ai-lab deploy/ai-lab-bad-config -- env | grep MODEL_DIR
+# → MODEL_DIR=/wrong_model_path
+```
+
+**Curl readyz from inside the pod — the error message is in the response:**
+
+```bash
+kubectl exec -n ai-lab deploy/ai-lab-bad-config -- \
+  curl -sf http://localhost:8080/readyz
+# → {"error":"MODEL_DIR path does not exist: /wrong_model_path","status":"not_ready"}
+```
+
+**Confirm the path doesn't exist:**
+
+```bash
+kubectl exec -n ai-lab deploy/ai-lab-bad-config -- ls /wrong_model_path
+# → No such file or directory
+
+kubectl exec -n ai-lab deploy/ai-lab-bad-config -- ls /model
+# → assets  fingerprint.pb  keras_metadata.pb  saved_model.pb  variables
+```
+
+### Fix it
+
+Patch the environment variable to the correct path:
+
+```bash
+kubectl set env deployment/ai-lab-bad-config -n ai-lab MODEL_DIR=/model
+```
+
+Or delete the overlay:
+
+```bash
+kubectl delete -f k8s/deployment-bad-config.yaml
+```
+
+### Verify the fix
+
+```bash
+# Pod should reach 1/1 Ready
+kubectl get pods -n ai-lab -l scenario=bad-config
+
+# Readiness returns 200
+kubectl exec -n ai-lab deploy/ai-lab-bad-config -- \
+  curl -sf http://localhost:8080/readyz
+
+# Prediction works
+kubectl exec -n ai-lab deploy/ai-lab-bad-config -- \
+  curl -sf -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" -d '{"x": 5}'
+```
+
+### Clean up
+
+```bash
+kubectl delete -f k8s/deployment-bad-config.yaml
 ```
 
 ---
