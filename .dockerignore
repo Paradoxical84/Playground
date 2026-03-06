@@ -2,8 +2,13 @@ __pycache__
 *.pyc
 .git
 .github
+.venv
+venv
 *.md
 k8s/
 runbooks/
 scripts/
-.venv
+.gitignore
+.dockerignore
+kind-config.yaml
+model/train_model.py

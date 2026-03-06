@@ -34,10 +34,10 @@ spec:
               name: http
           env:
             - name: MODEL_DIR
-              value: /app/model
+              value: /model
             - name: PORT
               value: "8080"
-            - name: STARTUP_DELAY
+            - name: STARTUP_DELAY_SEC
               value: "0"
           livenessProbe:
             httpGet:

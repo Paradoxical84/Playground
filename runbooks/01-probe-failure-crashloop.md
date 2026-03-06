@@ -22,12 +22,12 @@ kubectl logs -n ai-lab -l scenario=slow-startup --tail=50
 **What to look for:**
 
 - Events: `Liveness probe failed: ...` or `Readiness probe failed: ...`
-- Logs: `Simulating slow startup: sleeping 60 seconds`
+- Logs: `Simulating slow startup: sleeping 60 s …`
 - The container is killed before the sleep finishes.
 
 ## Root Cause
 
-The `STARTUP_DELAY=60` environment variable causes the application to sleep for
+The `STARTUP_DELAY_SEC=60` environment variable causes the application to sleep for
 60 seconds before loading the model. The liveness probe has
 `initialDelaySeconds=5` and `failureThreshold=3` with `periodSeconds=5`, so
 after ~20 seconds kubelet kills the container — well before the app finishes
@@ -60,7 +60,7 @@ startupProbe:
 
 ```yaml
 env:
-  - name: STARTUP_DELAY
+  - name: STARTUP_DELAY_SEC
     value: "0"
 ```
 

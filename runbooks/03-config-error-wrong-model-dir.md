@@ -22,15 +22,15 @@ kubectl logs -n ai-lab -l scenario=wrong-model-dir --tail=50
 
 **What to look for:**
 
-- Logs: `MODEL_DIR does not exist: /app/nonexistent-model`
+- Logs: `MODEL_DIR not found: /nonexistent-model`
 - Logs: `FileNotFoundError` stack trace
 - The container stays running (liveness passes) but never becomes ready.
 
 ## Root Cause
 
-The `MODEL_DIR` environment variable is set to `/app/nonexistent-model`, which
+The `MODEL_DIR` environment variable is set to `/nonexistent-model`, which
 does not exist in the container filesystem. The app catches the error, logs it,
-and continues running, but `ready` stays `False`.
+and continues running, but `_ready` stays `False`.
 
 ## Fix
 
@@ -39,7 +39,7 @@ Correct the environment variable in the manifest:
 ```yaml
 env:
   - name: MODEL_DIR
-    value: /app/model
+    value: /model
 ```
 
 Then redeploy:

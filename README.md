@@ -1,193 +1,163 @@
 # Cloud AI Troubleshooting Lab (Containers + Kubernetes)
 
-A hands-on lab for practicing real-world container and Kubernetes troubleshooting with an AI/ML workload. The application is a Flask API serving a TensorFlow model, packaged in Docker, and deployed to a local Kubernetes cluster via **kind**.
+A hands-on lab for practising real-world container and Kubernetes
+troubleshooting with an AI/ML workload.  The application is a Flask API
+serving a TensorFlow regression model, packaged in Docker, and deployable
+to a local Kubernetes cluster via **kind**.
 
-Four failure-injection scenarios let you practice diagnosing common production issues:
-
-| # | Scenario | Manifest | Runbook |
-|---|----------|----------|---------|
-| 1 | Probe failure / CrashLoopBackOff (slow startup) | `k8s/failures/slow-startup.yaml` | `runbooks/01-probe-failure-crashloop.md` |
-| 2 | OOMKilled (tight memory limit) | `k8s/failures/oom-killed.yaml` | `runbooks/02-oomkilled.md` |
-| 3 | Config error (wrong MODEL_DIR) | `k8s/failures/wrong-model-dir.yaml` | `runbooks/03-config-error-wrong-model-dir.md` |
-| 4 | DNS / service-discovery check | `k8s/failures/dns-debug.yaml` | `runbooks/04-dns-service-discovery.md` |
-
-## Prerequisites
-
-- **Docker** (20.10+)
-- **kind** (v0.20+) — `go install sigs.k8s.io/kind@latest` or `brew install kind`
-- **kubectl** (v1.27+)
-- **curl** (for testing endpoints)
-
-## Repository Structure
+## Repository layout
 
 ```
 .
 ├── app/
-│   ├── __init__.py
-│   ├── server.py          # Flask API with health/readiness probes
-│   └── train.py           # Model training script
+│   ├── app.py               # Flask inference API
+│   └── requirements.txt      # Python dependencies
+├── model/
+│   ├── train_model.py        # Trains & exports a SavedModel
+│   └── saved_model/          # (generated) TF SavedModel artefact
 ├── k8s/
-│   ├── base/
-│   │   ├── namespace.yaml
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── service-nodeport.yaml
-│   └── failures/
-│       ├── slow-startup.yaml
-│       ├── oom-killed.yaml
-│       ├── wrong-model-dir.yaml
-│       └── dns-debug.yaml
-├── runbooks/
-│   ├── 01-probe-failure-crashloop.md
-│   ├── 02-oomkilled.md
-│   ├── 03-config-error-wrong-model-dir.md
-│   └── 04-dns-service-discovery.md
-├── scripts/
-│   ├── build.sh
-│   ├── run-docker.sh
-│   ├── kind-setup.sh
-│   ├── deploy-failure.sh
-│   └── test-endpoints.sh
-├── kind-config.yaml
+│   ├── base/                 # Namespace, Deployment, Services
+│   └── failures/             # Failure-injection manifests
+├── runbooks/                 # Troubleshooting runbooks
+├── scripts/                  # Helper scripts (build, deploy, test)
 ├── Dockerfile
-├── requirements.txt
+├── kind-config.yaml
 └── README.md
 ```
 
-## Quick Start
-
-### 1. Build the Docker Image
-
-The multi-stage Dockerfile trains the model in the `train` stage and packages it into the `serve` stage:
-
-```bash
-./scripts/build.sh
-```
-
-This runs `docker build --target serve -t ai-lab:latest .`
-
-### 2. Run Locally with Docker
-
-```bash
-./scripts/run-docker.sh
-```
-
-In another terminal, test the endpoints:
-
-```bash
-./scripts/test-endpoints.sh
-# or manually:
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
-curl http://localhost:8080/info
-curl -X POST http://localhost:8080/predict \
-  -H "Content-Type: application/json" \
-  -d '{"instances": [[0.1, 0.2, 0.3, 0.4]]}'
-```
-
-### 3. Create a kind Cluster and Deploy
-
-```bash
-./scripts/kind-setup.sh
-```
-
-This creates a 3-node kind cluster (`ai-lab`), loads the Docker image, applies the base manifests, and waits for the rollout.
-
-### 4. Access the Service
-
-**Option A — port-forward (recommended):**
-
-```bash
-kubectl port-forward -n ai-lab svc/ai-lab 8080:80
-curl http://localhost:8080/healthz
-```
-
-**Option B — NodePort:**
-
-The `service-nodeport.yaml` exposes port 30080 on the kind host:
-
-```bash
-curl http://localhost:30080/healthz
-```
-
-### 5. Test All Endpoints
-
-```bash
-./scripts/test-endpoints.sh
-# or with a custom base URL:
-BASE_URL=http://localhost:30080 ./scripts/test-endpoints.sh
-```
-
-## Failure Injection Scenarios
-
-### Deploy a Scenario
-
-```bash
-# One at a time:
-./scripts/deploy-failure.sh slow-startup
-./scripts/deploy-failure.sh oom-killed
-./scripts/deploy-failure.sh wrong-model-dir
-./scripts/deploy-failure.sh dns-debug
-
-# All at once:
-./scripts/deploy-failure.sh all
-```
-
-### Investigate
-
-Use standard kubectl commands to observe the failures:
-
-```bash
-# Pod status overview
-kubectl get pods -n ai-lab -o wide
-
-# Detailed events and probe failures
-kubectl describe pod -n ai-lab <pod-name>
-
-# Container logs (structured JSON)
-kubectl logs -n ai-lab <pod-name> --tail=50
-
-# Previous container logs (useful after restarts)
-kubectl logs -n ai-lab <pod-name> --previous
-
-# DNS debugging from the debug pod
-kubectl exec -it -n ai-lab dns-debug -- sh
-# then: nslookup ai-lab.ai-lab.svc.cluster.local
-# then: curl http://ai-lab.ai-lab.svc.cluster.local/healthz
-```
-
-Refer to the matching runbook in `runbooks/` for each scenario's symptoms, signals, root cause, fix, and prevention steps.
-
-### Clean Up Failure Scenarios
-
-```bash
-./scripts/deploy-failure.sh clean
-```
-
-## API Endpoints
+## API endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/healthz` | Liveness probe — always 200 if process is alive |
-| GET | `/readyz` | Readiness probe — 200 after model loads, 503 otherwise |
-| GET | `/info` | Runtime metadata (model dir, TF version, hostname) |
-| POST | `/predict` | Inference — body: `{"instances": [[f1, f2, f3, f4]]}` |
+| GET | `/healthz` | Liveness — always 200 while the process is alive |
+| GET | `/readyz` | Readiness — 200 after model loads, 503 before |
+| POST | `/predict` | Inference — `{"x": number}` → `{"x": …, "y": …}` |
 
-## Environment Variables
+## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MODEL_DIR` | `/app/model` | Path to the saved TensorFlow model |
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MODEL_DIR` | `/model` | Path to the TF SavedModel directory |
+| `STARTUP_DELAY_SEC` | `0` | Seconds to sleep before loading the model (fault injection) |
 | `PORT` | `8080` | HTTP listen port |
-| `STARTUP_DELAY` | `0` | Seconds to sleep before loading model (fault injection) |
-| `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
-## Tear Down
+---
+
+## 1 — Local development (venv)
 
 ```bash
-# Delete the kind cluster
-kind delete cluster --name ai-lab
+# Create and activate a virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate
 
-# Remove the Docker image
+# Install dependencies
+pip install -r app/requirements.txt
+
+# Train the model (writes model/saved_model/)
+python model/train_model.py
+
+# Run the server locally (point at the exported model)
+MODEL_DIR=model/saved_model python app/app.py
+```
+
+In another terminal:
+
+```bash
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+curl -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" \
+  -d '{"x": 5}'
+```
+
+Expected `/predict` response (y ≈ 2·5 + 1 = 11):
+
+```json
+{"x": 5.0, "y": 10.95}
+```
+
+## 2 — Docker build
+
+> **Pre-requisite:** the model must already be exported (`model/saved_model/`
+> must exist).  Run the training step from section 1 first.
+
+```bash
+docker build -t ai-lab:latest .
+```
+
+## 3 — Docker run + curl tests
+
+```bash
+# Start the container
+docker run --rm -p 8080:8080 --name ai-lab ai-lab:latest
+```
+
+In another terminal:
+
+```bash
+# Liveness
+curl http://localhost:8080/healthz
+# → {"status":"alive"}
+
+# Readiness
+curl http://localhost:8080/readyz
+# → {"status":"ready"}
+
+# Prediction
+curl -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" \
+  -d '{"x": 3}'
+# → {"x":3.0,"y":6.98}
+
+# Slow-startup simulation (in a separate run)
+docker run --rm -p 8080:8080 -e STARTUP_DELAY_SEC=30 ai-lab:latest
+# /readyz will return 503 for ~30 s, then 200
+
+# Bad MODEL_DIR simulation
+docker run --rm -p 8080:8080 -e MODEL_DIR=/nonexistent ai-lab:latest
+# /readyz returns 503 permanently; check logs for FileNotFoundError
+```
+
+## 4 — Kubernetes (kind) deployment
+
+See `scripts/kind-setup.sh` for the automated flow, or run manually:
+
+```bash
+# Create a kind cluster
+kind create cluster --config kind-config.yaml --wait 60s
+
+# Load the image into kind
+kind load docker-image ai-lab:latest --name ai-lab
+
+# Deploy base manifests
+kubectl apply -f k8s/base/namespace.yaml
+kubectl apply -f k8s/base/deployment.yaml
+kubectl apply -f k8s/base/service.yaml
+
+# Wait for rollout
+kubectl rollout status deployment/ai-lab -n ai-lab --timeout=120s
+
+# Port-forward and test
+kubectl port-forward -n ai-lab svc/ai-lab 8080:80 &
+curl http://localhost:8080/healthz
+curl -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" -d '{"x": 7}'
+```
+
+## 5 — Failure-injection scenarios
+
+| # | Scenario | Deploy command |
+|---|----------|---------------|
+| 1 | Probe failure / CrashLoopBackOff | `kubectl apply -f k8s/failures/slow-startup.yaml` |
+| 2 | OOMKilled | `kubectl apply -f k8s/failures/oom-killed.yaml` |
+| 3 | Config error (wrong MODEL_DIR) | `kubectl apply -f k8s/failures/wrong-model-dir.yaml` |
+| 4 | DNS / service-discovery debug | `kubectl apply -f k8s/failures/dns-debug.yaml` |
+
+Each scenario has a matching runbook in `runbooks/`.
+
+## Tear-down
+
+```bash
+kind delete cluster --name ai-lab
 docker rmi ai-lab:latest
 ```

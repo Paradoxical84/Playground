@@ -1,8 +1,8 @@
 # Failure scenario 1: Probe failures via slow startup
 #
-# STARTUP_DELAY=60 makes the app sleep 60 s before loading the model.
+# STARTUP_DELAY_SEC=60 makes the app sleep 60 s before loading the model.
 # The readiness probe will fail repeatedly, and the liveness probe
-# (initialDelaySeconds=10) will kill the container before it becomes ready,
+# (initialDelaySeconds=5) will kill the container before it becomes ready,
 # causing a CrashLoopBackOff.
 #
 # Symptoms: Pod stuck in CrashLoopBackOff, restartCount climbing.
@@ -36,13 +36,11 @@ spec:
               name: http
           env:
             - name: MODEL_DIR
-              value: /app/model
+              value: /model
             - name: PORT
               value: "8080"
-            - name: STARTUP_DELAY
+            - name: STARTUP_DELAY_SEC
               value: "60"
-            - name: LOG_LEVEL
-              value: DEBUG
           livenessProbe:
             httpGet:
               path: /healthz

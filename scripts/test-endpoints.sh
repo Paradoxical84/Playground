@@ -14,21 +14,16 @@ echo "--- GET /readyz ---"
 curl -s -w "\nHTTP %{http_code}\n" "${BASE_URL}/readyz"
 echo ""
 
-echo "--- GET /info ---"
-curl -s -w "\nHTTP %{http_code}\n" "${BASE_URL}/info" | python3 -m json.tool 2>/dev/null || \
-  curl -s -w "\nHTTP %{http_code}\n" "${BASE_URL}/info"
-echo ""
-
 echo "--- POST /predict ---"
 curl -s -w "\nHTTP %{http_code}\n" \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"instances": [[0.1, 0.2, 0.3, 0.4], [0.9, 0.8, 0.7, 0.6]]}' \
+  -d '{"x": 5}' \
   "${BASE_URL}/predict" | python3 -m json.tool 2>/dev/null || \
   curl -s -w "\nHTTP %{http_code}\n" \
     -X POST \
     -H "Content-Type: application/json" \
-    -d '{"instances": [[0.1, 0.2, 0.3, 0.4], [0.9, 0.8, 0.7, 0.6]]}' \
+    -d '{"x": 5}' \
     "${BASE_URL}/predict"
 echo ""
 
