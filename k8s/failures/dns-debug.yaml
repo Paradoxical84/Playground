@@ -1,0 +1,30 @@
+# Failure scenario 4: DNS / service-discovery debugging pod
+#
+# Launches a lightweight debug pod with curl, nslookup, dig, and wget
+# pre-installed. Use it to verify cluster DNS and service discovery.
+#
+# Usage:
+#   kubectl exec -it -n ai-lab dns-debug -- sh
+#   nslookup ai-lab.ai-lab.svc.cluster.local
+#   curl http://ai-lab.ai-lab.svc.cluster.local/healthz
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dns-debug
+  namespace: ai-lab
+  labels:
+    app: dns-debug
+    scenario: dns-debug
+spec:
+  containers:
+    - name: debug
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "3600"]
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi

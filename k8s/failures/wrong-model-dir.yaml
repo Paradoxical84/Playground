@@ -1,0 +1,65 @@
+# Failure scenario 3: Configuration error — wrong MODEL_DIR
+#
+# Points MODEL_DIR at a path that does not exist inside the container.
+# The app will start, liveness probe passes, but readiness fails because
+# the model never loads (FileNotFoundError logged).
+#
+# Symptoms: Pod Running but 0/1 Ready, /readyz returns 503, error in logs.
+# Fix: Correct the MODEL_DIR environment variable.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-lab-bad-config
+  namespace: ai-lab
+  labels:
+    app: ai-lab-bad-config
+    scenario: wrong-model-dir
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-lab-bad-config
+  template:
+    metadata:
+      labels:
+        app: ai-lab-bad-config
+        scenario: wrong-model-dir
+    spec:
+      containers:
+        - name: ai-lab
+          image: ai-lab:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: MODEL_DIR
+              value: /app/nonexistent-model
+            - name: PORT
+              value: "8080"
+            - name: STARTUP_DELAY
+              value: "0"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

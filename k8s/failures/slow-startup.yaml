@@ -1,0 +1,68 @@
+# Failure scenario 1: Probe failures via slow startup
+#
+# STARTUP_DELAY=60 makes the app sleep 60 s before loading the model.
+# The readiness probe will fail repeatedly, and the liveness probe
+# (initialDelaySeconds=10) will kill the container before it becomes ready,
+# causing a CrashLoopBackOff.
+#
+# Symptoms: Pod stuck in CrashLoopBackOff, restartCount climbing.
+# Fix: Increase initialDelaySeconds / add a startupProbe.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-lab-slow-startup
+  namespace: ai-lab
+  labels:
+    app: ai-lab-slow-startup
+    scenario: slow-startup
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-lab-slow-startup
+  template:
+    metadata:
+      labels:
+        app: ai-lab-slow-startup
+        scenario: slow-startup
+    spec:
+      containers:
+        - name: ai-lab
+          image: ai-lab:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: MODEL_DIR
+              value: /app/model
+            - name: PORT
+              value: "8080"
+            - name: STARTUP_DELAY
+              value: "60"
+            - name: LOG_LEVEL
+              value: DEBUG
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
